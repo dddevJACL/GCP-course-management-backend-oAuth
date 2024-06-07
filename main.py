@@ -14,14 +14,14 @@ app.secret_key = 'SECRET_KEY'
 
 client = datastore.Client()
 
-AVATAR_PHOTO='XXXXXXXXXXXXX'
-PASSWORD = "XXXXXXXXXXXXXXXXXXX"
+AVATAR_PHOTO='XXXXXXXXXXXXXXX'
+PASSWORD = "XXXXXXXXXXXXXXXXXXXX"
 USERS = "users"
 COURSES = "courses"
 # Update the values of the following 3 variables
-CLIENT_ID = 'XXXXXXXXXXXXXXXXXXXXXX'
-CLIENT_SECRET = 'XXXXXXXXXXXXXXXXXXXXXXXX'
-DOMAIN = 'XXXXXXXXXXXXXXXXXXXXXXXX'
+CLIENT_ID = 'XXXXXXXXXXXXXXXXXXXXXXXX'
+CLIENT_SECRET = 'XXXXXXXXXXXXXXXXXXXXX'
+DOMAIN = 'XXXXXXXXXXXXXXXXXXXXXXX'
 # For example
 # DOMAIN = '493-24-spring.us.auth0.com'
 # Note: don't include the protocol in the value of the variable DOMAIN
@@ -288,6 +288,8 @@ def get_all_users():
             for result in user_query_results:
                 if "avatar" in result:
                     del result["avatar"]
+                if "courses" in result:
+                    del result["courses"]
                 result["id"] = result.key.id
         return (user_query_results, 200)
     else:
@@ -340,6 +342,7 @@ def get_user(id):
         return (ERROR_403, 403)
     if "avatar" in requested_user:
         requested_user["avatar_url"] = request.base_url + "/avatar"
+        del requested_user["avatar"]
     if requested_user["role"] != "admin":
         if "courses" not in requested_user:
             requested_user["courses"] = list()
@@ -349,7 +352,7 @@ def get_user(id):
         base_url = base_url[0]
         for course in stored_course_list:
             requested_user["courses"].append(base_url + "/courses/" + str(course))
-    return (requesting_user, 200) #?
+    return (requested_user, 200) #?
 
 def validate_course_create_request(request_json, required_attributes):
     """Validates that course create request has all required attributes"""
@@ -458,6 +461,7 @@ def update_instructors(old_instructor, new_instructor, course_id):
         if course != course_id:
             new_course_list.append(course)
     instructor["courses"] = new_course_list
+    del instructor["id"]
     client.put(instructor)
     # add course to new instructor course attribute list
     instructor = get_entity_by_id(new_instructor, USERS)
@@ -496,9 +500,10 @@ def update_course(id):
             return (ERROR_400, 400)
         update_instructors(course["instructor_id"], content["instructor_id"], course["id"])
     course.update(create_post_or_update_dict(content, REQUIRED_COURSE_ATTRIBUTES, course))
+    del course["id"]
     client.put(course)
     course["id"] = course.key.id
-    course["self"] = request.base_url + "/" + str(course.key.id)
+    course["self"] = request.base_url
     return (course, 200)
 
 
@@ -581,16 +586,21 @@ def update_course_enrollment(id):
         del student["id"]
         if "courses" not in student:
             student["courses"] = list()
+        if id in student["courses"]:
+            continue
         student["courses"].append(id)
         client.put(student)
     # remove students from course
-    for student_id in content["add"]:
+    for student_id in content["remove"]:
         student = get_entity_by_id(student_id, USERS)
+        if "courses" in student and id not in student["courses"]:
+            continue
         new_course_list = list()
         for course in student["courses"]:
             if course != id:
                 new_course_list.append(course)
         student["courses"] = new_course_list
+        del student["id"]
         client.put(student)
     return ('', 200)
 
