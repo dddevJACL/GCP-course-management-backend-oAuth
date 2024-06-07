@@ -14,17 +14,14 @@ app.secret_key = 'SECRET_KEY'
 
 client = datastore.Client()
 
-AVATAR_PHOTO='XXXXXXXXXXXXXXX'
-PASSWORD = "XXXXXXXXXXXXXXXXXXXX"
+AVATAR_PHOTO='XXXXXXXXXXXXXXXXX'
+PASSWORD = "XXXXXXXXXXXXXXXX"
 USERS = "users"
 COURSES = "courses"
-# Update the values of the following 3 variables
-CLIENT_ID = 'XXXXXXXXXXXXXXXXXXXXXXXX'
-CLIENT_SECRET = 'XXXXXXXXXXXXXXXXXXXXX'
-DOMAIN = 'XXXXXXXXXXXXXXXXXXXXXXX'
-# For example
-# DOMAIN = '493-24-spring.us.auth0.com'
-# Note: don't include the protocol in the value of the variable DOMAIN
+
+CLIENT_ID = 'XXXXXXXXXXXXXXXX'
+CLIENT_SECRET = 'XXXXXXXXXXXXXXX'
+DOMAIN = 'XXXXXXXXXXX'
 
 ERROR_400 = {"Error": "The request body is invalid"}
 ERROR_401 = {"Error":  "Unauthorized"}
@@ -216,7 +213,7 @@ def get_entity_by_id(id, entity_type):
 
 @app.route('/' + USERS + '/<int:id>' + '/avatar', methods=['GET'])
 def get_avatar(id):
-    """TODO"""
+    """gets avatar of user associated with id"""
     try:
         payload = verify_jwt(request)
     except:
@@ -240,7 +237,7 @@ def get_avatar(id):
 
 @app.route('/' + USERS + '/<int:id>' + '/avatar', methods=['DELETE'])
 def delete_avatar(id):
-    """TODO"""
+    """Deletes avatar of user associated with id"""
     try:
         payload = verify_jwt(request)
     except:
@@ -579,7 +576,7 @@ def update_course_enrollment(id):
     content = request.get_json()
     valid_request = verify_enrollment_list(content)
     if not valid_request:
-        return {"Error": "Enrollment data is invalid"}
+        return ({"Error": "Enrollment data is invalid"}, 409)
     # add students to course
     for student_id in content["add"]:
         student = get_entity_by_id(student_id, USERS)
@@ -655,7 +652,7 @@ def get_enrollment(id):
         if "courses" in student:
             for course in student["courses"]:
                 if course == id:
-                    response_list.append(student)
+                    response_list.append(student.key.id)
     return (response_list, 200)
         
 
