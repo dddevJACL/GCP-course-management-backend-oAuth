@@ -14,16 +14,16 @@ app.secret_key = 'SECRET_KEY'
 
 client = datastore.Client()
 
-AVATAR_PHOTO='XXXXXXXXXXXXXXXXXXXXXXX'
-PASSWORD = "XXXXXXXXXXXXXXXXXX"
+AVATAR_PHOTO='XXXXXXXXXXXXXXXXXX'
+PASSWORD = "XXXXXXXXXXXXXXXXX"
 USERS = "users"
 COURSES = "courses"
 # Update the values of the following 3 variables
-CLIENT_ID = 'XXXXXXXXXXXXXXXXXXXXX'
-CLIENT_SECRET = 'XXXXXXXXXXXXXXXXXXXX'
-DOMAIN = 'XXXXXXXXXXXXXXXXX'
+CLIENT_ID = 'XXXXXXXXXXXXXXXXXXXXXXX'
+CLIENT_SECRET = 'XXXXXXXXXXXXXXXX'
+DOMAIN = 'XXXXXXXXXXXXXX'
 # For example
-# DOMAIN = 'XXXXXXXXXXXXXXX'
+# DOMAIN = '493-24-spring.us.auth0.com'
 # Note: don't include the protocol in the value of the variable DOMAIN
 
 ERROR_400 = {"Error": "The request body is invalid"}
@@ -61,8 +61,9 @@ def handle_auth_error(ex):
     response.status_code = ex.status_code
     return response
 
-# Verify the JWT in the request's Authorization header
+
 def verify_jwt(request):
+    """Verify the JWT in the request's Authorization header"""
     if 'Authorization' in request.headers:
         auth_header = request.headers['Authorization'].split()
         token = auth_header[1]
@@ -127,35 +128,25 @@ def verify_jwt(request):
 
 @app.route('/')
 def index():
+    """Route of API, suggests users to access courses page to use API"""
     return "Please navigate to /courses to use this API"\
 
-# Create a lodging if the Authorization header contains a valid JWT
-@app.route('/lodgings', methods=['POST'])
-def lodgings_post():
-    if request.method == 'POST':
-        payload = verify_jwt(request)
-        content = request.get_json()
-        new_lodging = datastore.entity.Entity(key=client.key("lodgings"))
-        new_lodging.update({"name": content["name"], "description": content["description"],
-          "price": content["price"]})
-        client.put(new_lodging)
-        return jsonify(id=new_lodging.key.id)
-    else:
-        return jsonify(error='Method not recogonized')
 
-# Decode the JWT supplied in the Authorization header
 @app.route('/decode', methods=['GET'])
 def decode_jwt():
+    """Decode the JWT supplied in the Authorization header"""
     payload = verify_jwt(request)
     return payload          
         
 
-# Generate a JWT from the Auth0 domain and return it
-# Request: JSON body with 2 properties with "username" and "password"
-#       of a user registered with this Auth0 domain
-# Response: JSON with the JWT as the value of the property id_token
 @app.route('/' + USERS + '/login', methods=['POST'])
 def login_user():
+    """
+    Generate a JWT from the Auth0 domain and return it
+    Request: JSON body with 2 properties with "username" and "password"
+    of a user registered with this Auth0 domain
+    Response: JSON with the JWT as the value of the property id_token
+    """
     content = request.get_json()
     try:
         username = content["username"]
@@ -180,6 +171,7 @@ def login_user():
 
 @app.route('/' + USERS + '/<int:id>' + '/avatar', methods=['POST'])
 def store_avatar(id):
+    """TODO"""
     # Any files in the request will be available in request.files object
     # Check if there is an entry in request.files with the key 'file'
     if 'file' not in request.files:
@@ -233,14 +225,22 @@ def get_entity_by_id(id, entity_type):
 
 
 @app.route('/' + USERS + '/<int:id>' + '/avatar', methods=['GET'])
-def get_avatar(file_name):
+def get_avatar(id):
     """TODO"""
     try:
         payload = verify_jwt(request)
     except:
         return (ERROR_401, 401)
+    requested_user = get_entity_by_id(id, USERS)
+    if requested_user is None:
+        return (ERROR_404, 404)
+    if requested_user["sub"] != payload["sub"]:
+        return (ERROR_403, 403)
+    if "avatar" not in requested_user:
+        return (ERROR_404, 404)
     storage_client = storage.Client()
     bucket = storage_client.get_bucket(AVATAR_PHOTO)
+    file_name = requested_user["avatar"]
     # Create a blob with the given file name
     blob = bucket.blob(file_name)
     # Create a file object in memory using Python io package
@@ -253,13 +253,28 @@ def get_avatar(file_name):
     return send_file(file_obj, mimetype='image/x-png', download_name=file_name)
 
 
-@app.route('/images/<file_name>', methods=['DELETE'])
-def delete_avatar(file_name):
+@app.route('/' + USERS + '/<int:id>' + '/avatar', methods=['DELETE'])
+def delete_avatar(id):
+    """TODO"""
+    try:
+        payload = verify_jwt(request)
+    except:
+        return (ERROR_401, 401)
+    requested_user = get_entity_by_id(id, USERS)
+    if requested_user is None:
+        return (ERROR_404, 404)
+    if requested_user["sub"] != payload["sub"]:
+        return (ERROR_403, 403)
+    if "avatar" not in requested_user:
+        return (ERROR_404, 404)
     storage_client = storage.Client()
     bucket = storage_client.get_bucket(AVATAR_PHOTO)
+    file_name = requested_user["avatar"]
     blob = bucket.blob(file_name)
     # Delete the file from Cloud Storage
     blob.delete()
+    del requested_user["avatar"]
+    client.put(requested_user)
     return '',204
 
 @app.route('/' + USERS, methods=['GET'])
@@ -293,13 +308,64 @@ def get_all_users():
     else:
         # if not admin, return 403
         return (ERROR_403, 403)
-    
+
+def get_requesting_user(payload_sub):
+    """Returns the entity corresponding to the user making the request, in order to help with authentication"""
+    datastore_query = client.query(kind=USERS)
+    datastore_query.add_filter("sub", "=", payload_sub)
+    datastore_query_results = datastore_query.fetch()
+    count = 0
+    target_result =  None
+    for result in datastore_query_results:
+        count += 1
+        target_result = result
+    if count == 1:
+        target_result["id"] = target_result.key.id
+        return target_result
+    return None
+
+def get_query_list_where_a_equals_b(a, b, kind):
+    """Generic function that returns a list of entities that match the desired query"""
+    datastore_query = client.query(kind=kind)
+    datastore_query.add_filter(a, "=", b)
+    datastore_query_results = datastore_query.fetch()
+    result_list = list()
+    for result in datastore_query_results:
+        result["id"] = result.key.id
+        result_list.append(result)
+    return result_list
 
 
 @app.route('/' + USERS + '/<int:id>', methods=['GET'])
-def get_image(id):
-    """TODO"""
-    pass
+def get_user(id):
+    """
+    Returns given user, but only if the request comes from the admin, or the id matches jwt of same user.
+    Otherwise 403 is returned
+    """
+    # Verify jwt
+    try:
+        payload = verify_jwt(request)
+    except:
+        return (ERROR_401, 401)
+    requesting_user = get_requesting_user(payload["sub"])
+    requested_user = get_entity_by_id(id, USERS)
+    if requested_user is None:
+        return (ERROR_403, 403)
+    if requesting_user["role"] != "admin" and payload["sub"] != requested_user["sub"]:
+        return (ERROR_403, 403)
+    return (requesting_user, 200) #?
+
+
+@app.route('/' + COURSES, methods=['POST'])
+def create_course():
+    """
+    Creates a course with the given attributes, only if the requester is admin. If JWT is invalid or missing,
+    401 is returned. If the requester is not admin, 403 is returned. If any attributes are missing, or the instructor_id
+    is invalid, 400 is returned.
+    """
+    
+
+
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8080, debug=True)
