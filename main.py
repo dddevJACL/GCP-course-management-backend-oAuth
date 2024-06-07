@@ -14,14 +14,14 @@ app.secret_key = 'SECRET_KEY'
 
 client = datastore.Client()
 
-AVATAR_PHOTO='XXXXXXXXXXXXXXX'
-PASSWORD = "XXXXXXXXXXX"
+AVATAR_PHOTO='XXXXXXXXXXX'
+PASSWORD = "XXXXXXXXXXXXXX"
 USERS = "users"
 COURSES = "courses"
 # Update the values of the following 3 variables
-CLIENT_ID = 'XXXXXXXXXXXXXX'
-CLIENT_SECRET = 'XXXXXXXXXXXXXXXXXX'
-DOMAIN = 'XXXXXXXXXXXXXXXXXXXX'
+CLIENT_ID = 'XXXXXXXXXXXXXXX'
+CLIENT_SECRET = 'XXXXXXXXXXXXXXXXXXX'
+DOMAIN = 'XXXXXXXXXXXXXXXXXX'
 # For example
 # DOMAIN = '493-24-spring.us.auth0.com'
 # Note: don't include the protocol in the value of the variable DOMAIN
@@ -174,8 +174,6 @@ def login_user():
 @app.route('/' + USERS + '/<int:id>' + '/avatar', methods=['POST'])
 def store_avatar(id):
     """TODO"""
-    # Any files in the request will be available in request.files object
-    # Check if there is an entry in request.files with the key 'file'
     if 'file' not in request.files:
         return (ERROR_400, 400)
     try:
@@ -187,25 +185,14 @@ def store_avatar(id):
         return (ERROR_404, 404)
     if requested_user["sub"] != payload["sub"]:
         return (ERROR_403, 403)
-    # Set file_obj to the file sent in the request
     file_obj = request.files['file']
-    # If the multipart form data has a part with name 'tag', set the
-    # value of the variable 'tag' to the value of 'tag' in the request.
-    # Note we are not doing anything with the variable 'tag' in this
-    # example, however this illustrates how we can extract data from the
-    # multipart form data in addition to the files.
     if 'tag' in request.form:
         tag = request.form['tag']
-    # Create a storage client
     storage_client = storage.Client()
     print(storage_client)
-    # Get a handle on the bucket
     bucket = storage_client.get_bucket(AVATAR_PHOTO)
-    # Create a blob object for the bucket with the name of the file
     blob = bucket.blob(file_obj.filename)
-    # Position the file_obj to its beginning
     file_obj.seek(0)
-    # Upload the file into Cloud Storage
     blob.upload_from_file(file_obj)
     requested_user["avatar"] = file_obj.filename
     del requested_user["id"]
@@ -244,15 +231,10 @@ def get_avatar(id):
     storage_client = storage.Client()
     bucket = storage_client.get_bucket(AVATAR_PHOTO)
     file_name = requested_user["avatar"]
-    # Create a blob with the given file name
     blob = bucket.blob(file_name)
-    # Create a file object in memory using Python io package
     file_obj = io.BytesIO()
-    # Download the file from Cloud Storage to the file_obj variable
     blob.download_to_file(file_obj)
-    # Position the file_obj to its beginning
     file_obj.seek(0)
-    # Send the object as a file in the response with the correct MIME type and file name
     return send_file(file_obj, mimetype='image/x-png', download_name=file_name)
 
 
@@ -274,12 +256,11 @@ def delete_avatar(id):
     bucket = storage_client.get_bucket(AVATAR_PHOTO)
     file_name = requested_user["avatar"]
     blob = bucket.blob(file_name)
-    # Delete the file from Cloud Storage
     blob.delete()
     del requested_user["avatar"]
     del requested_user["id"]
     client.put(requested_user)
-    return '',204
+    return ('', 204)
 
 @app.route('/' + USERS, methods=['GET'])
 def get_all_users():
@@ -391,16 +372,29 @@ def create_course():
     new_course = datastore.entity.Entity(key=client.key(COURSES))
     new_course.update(create_post_or_update_dict(content, REQUIRED_COURSE_ATTRIBUTES))
     client.put(new_course)
+    instructor_id = content["instructor_id"]
+    instructor = get_entity_by_id(instructor_id, USERS)
+    if "courses" in instructor:
+        instructor["courses"].append(new_course.key.id)
+        del instructor["id"]
+        client.put(instructor)
+    else:
+        course_list = list()
+        course_list.append(new_course.key.id)
+        instructor["courses"] = course_list
+        del instructor["id"]
+        client.put(instructor)
     new_course["id"] = new_course.key.id
     new_course["self"] = request.base_url + "/" + str(new_course.key.id)
     return (new_course, 201)
 
 
-def create_post_or_update_dict(request_json, required_attributes):
+def create_post_or_update_dict(request_json, required_attributes, entity_dict=None):
     """
     Creates a dict object for entities used for the post or update method in posting to datastore
     """
-    entity_dict = dict()
+    if entity_dict is None:
+        entity_dict = dict()
     for attribute in required_attributes:
         if attribute in request_json:
             entity_dict[attribute] = request_json[attribute]
@@ -431,6 +425,130 @@ def get_all_courses():
     course_list["next"] = next_url + f"?limit=3&offset={str(int(offset) + 3)}"
     return (course_list, 200)
 
+
+@app.route('/' + COURSES + '/<int:id>', methods=['GET'])
+def get_course(id):
+    """Returns the course with the given id, or 404"""
+    requested_course = get_entity_by_id(id, COURSES)
+    if requested_course is None:
+        return (ERROR_404, 404)
+    requested_course["id"] = requested_course.key.id
+    requested_course["self"] = request.base_url
+    return requested_course
+
+def update_instructors(old_instructor, new_instructor, course_id):
+    """Updates the course attribute for instructors for a particular course"""
+    if old_instructor == new_instructor:
+        return None
+    # remove course from old instructor course attribute list
+    instructor = get_entity_by_id(old_instructor, USERS)
+    new_course_list = list()
+    for course in instructor["courses"]:
+        if course != course_id:
+            new_course_list.append(course)
+    instructor["courses"] = new_course_list
+    client.put(instructor)
+    # add course to new instructor course attribute list
+    instructor = get_entity_by_id(new_instructor, USERS)
+    if "courses" in instructor:
+        instructor["courses"].append(course_id)
+        del instructor["id"]
+        client.put(instructor)
+    else:
+        course_list = list()
+        course_list.append(course_id)
+        instructor["courses"] = course_list
+        del instructor["id"]
+        client.put(instructor)
+    return None
+    
+@app.route('/' + COURSES + '/<int:id>', methods=['PATCH'])
+def update_course(id):
+    """
+    Update a course with the given id. If instructor id is included and is invalid, return 400.
+    If JWT is invalid, return 401. If JWT is valid but is not admin, return 403.
+    """
+    try:
+        payload = verify_jwt(request)
+    except:
+        return (ERROR_401, 401)
+    requesting_user = get_requesting_user(payload["sub"])
+    if requesting_user["role"] != "admin":
+        return (ERROR_403, 403)
+    content = request.get_json()
+    course = get_entity_by_id(id, COURSES)
+    if course is None:
+        return (ERROR_403, 403)
+    if "instructor_id" in content:
+        valid_request = validate_course_create_request(content, ["instructor_id"])
+        if not valid_request:
+            return (ERROR_400, 400)
+        update_instructors(course["instructor_id"], content["instructor_id"], course["id"])
+    course.update(create_post_or_update_dict(content, REQUIRED_COURSE_ATTRIBUTES, course))
+    client.put(course)
+    course["id"] = course.key.id
+    course["self"] = request.base_url + "/" + str(course.key.id)
+    return (course, 200)
+
+
+@app.route('/' + COURSES + '/<int:id>', methods=['DELETE'])
+def delete_course(id):
+    """
+    Delete a course with the given id. If instructor id is included and is invalid, return 400.
+    If JWT is invalid, return 401. If JWT is valid but is not admin, return 403.
+    """
+    try:
+        payload = verify_jwt(request)
+    except:
+        return (ERROR_401, 401)
+    requesting_user = get_requesting_user(payload["sub"])
+    if requesting_user["role"] != "admin":
+        return (ERROR_403, 403)
+    course = get_entity_by_id(id, COURSES)
+    if course is None:
+        return (ERROR_403, 403)
+    delete_course_from_course_list(id, True, True)
+    course_id_key = client.key(COURSES, course.key.id)
+    client.delete(course_id_key)
+    return ('', 204)
+
+
+def delete_course_from_course_list(course_id, students=False, instructors=False):
+    """Deletes a course from course list of students and instructors"""
+    datastore_query = client.query(kind=USERS)
+    datastore_query_results = datastore_query.fetch()
+    for user in datastore_query_results:
+        if user["role"] == "admmin":
+            continue
+        if not students:
+            continue
+        if not instructors:
+            continue
+        if "courses" not in user:
+            continue
+        new_course_list = list()
+        for course in user["courses"]:
+            if course != course_id:
+                new_course_list.append(course)
+        user["courses"] = new_course_list
+        client.put(user)
+    return None
+
+@app.route('/' + COURSES + '/<int:id>' + "/students", methods=['PATCH'])
+def update_course_enrollment(id):
+    """
+    Updates the enrollment for a course based on the given 'add' or 'remove' lists in the request.
+    If  JWT is invalid or missing, 401 is returned. If JWT is valid, but doesn't belong to admin
+    or appropriate instructor, 403 is returned. If there are any errors in the request body, 409 is returned.
+    """
+    pass
+
+def verify_enrollment_list(enrollment_list):
+    """
+    Verifies that the request body sent for updating course enrollment is valid. Returns True if so else False
+    """
+    
+        
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8080, debug=True)
