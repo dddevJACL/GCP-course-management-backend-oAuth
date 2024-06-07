@@ -14,14 +14,14 @@ app.secret_key = 'SECRET_KEY'
 
 client = datastore.Client()
 
-AVATAR_PHOTO='XXXXXXXXXXXXXXXXXX'
-PASSWORD = "XXXXXXXXXXXXXXXXX"
+AVATAR_PHOTO='XXXXXXXXXXXXXXX'
+PASSWORD = "XXXXXXXXXXX"
 USERS = "users"
 COURSES = "courses"
 # Update the values of the following 3 variables
-CLIENT_ID = 'XXXXXXXXXXXXXXXXXXXXXXX'
-CLIENT_SECRET = 'XXXXXXXXXXXXXXXX'
-DOMAIN = 'XXXXXXXXXXXXXX'
+CLIENT_ID = 'XXXXXXXXXXXXXX'
+CLIENT_SECRET = 'XXXXXXXXXXXXXXXXXX'
+DOMAIN = 'XXXXXXXXXXXXXXXXXXXX'
 # For example
 # DOMAIN = '493-24-spring.us.auth0.com'
 # Note: don't include the protocol in the value of the variable DOMAIN
@@ -30,6 +30,8 @@ ERROR_400 = {"Error": "The request body is invalid"}
 ERROR_401 = {"Error":  "Unauthorized"}
 ERROR_403 = {"Error": "You don't have permission on this resource"}
 ERROR_404 = {"Error": "Not found"}
+
+REQUIRED_COURSE_ATTRIBUTES = ["subject", "number", "title", "term", "instructor_id"]
 
 ALGORITHMS = ["RS256"]
 
@@ -206,6 +208,7 @@ def store_avatar(id):
     # Upload the file into Cloud Storage
     blob.upload_from_file(file_obj)
     requested_user["avatar"] = file_obj.filename
+    del requested_user["id"]
     client.put(requested_user)
     return ({'avatar_url': request.url},200)
 
@@ -274,6 +277,7 @@ def delete_avatar(id):
     # Delete the file from Cloud Storage
     blob.delete()
     del requested_user["avatar"]
+    del requested_user["id"]
     client.put(requested_user)
     return '',204
 
@@ -355,6 +359,16 @@ def get_user(id):
         return (ERROR_403, 403)
     return (requesting_user, 200) #?
 
+def validate_course_create_request(request_json, required_attributes):
+    """Validates that course create request has all required attributes"""
+    for attribute in required_attributes:
+        if attribute not in request_json:
+            return False
+    instructor_id = request_json["instructor_id"]
+    instructor = get_entity_by_id(instructor_id, USERS)
+    if instructor is None or instructor["role"] != "instructor":
+        return False
+    return True
 
 @app.route('/' + COURSES, methods=['POST'])
 def create_course():
@@ -363,8 +377,59 @@ def create_course():
     401 is returned. If the requester is not admin, 403 is returned. If any attributes are missing, or the instructor_id
     is invalid, 400 is returned.
     """
+    try:
+        payload = verify_jwt(request)
+    except:
+        return (ERROR_401, 401)
+    requesting_user = get_requesting_user(payload["sub"])
+    if requesting_user["role"] != "admin":
+        return (ERROR_403, 403)
+    content = request.get_json()
+    valid_request = validate_course_create_request(content, REQUIRED_COURSE_ATTRIBUTES)
+    if not valid_request:
+        return (ERROR_400, 400)
+    new_course = datastore.entity.Entity(key=client.key(COURSES))
+    new_course.update(create_post_or_update_dict(content, REQUIRED_COURSE_ATTRIBUTES))
+    client.put(new_course)
+    new_course["id"] = new_course.key.id
+    new_course["self"] = request.base_url + "/" + str(new_course.key.id)
+    return (new_course, 201)
+
+
+def create_post_or_update_dict(request_json, required_attributes):
+    """
+    Creates a dict object for entities used for the post or update method in posting to datastore
+    """
+    entity_dict = dict()
+    for attribute in required_attributes:
+        if attribute in request_json:
+            entity_dict[attribute] = request_json[attribute]
+    return entity_dict
     
 
+@app.route('/' + COURSES, methods=['GET'])
+def get_all_courses():
+    """Returns all courses, paginated based on given limit/offset params, with a default of 3."""
+    offset = request.args.get("offset")
+    limit = request.args.get("limit")
+    if offset is None:
+        offset = 0
+    if limit is None:
+        limit = 3
+    courses_query = client.query(kind=COURSES)
+    courses_query.order = ["subject"]
+    courses_iterator = courses_query.fetch(limit=int(limit), offset=int(offset))
+    pages = courses_iterator.pages
+    result = list(next(pages))
+    next_url = request.base_url.split("?")
+    next_url = next_url[0]
+    for course in result:
+        course["id"] = course.key.id
+        course["self"] = next_url + "/" + str(course.key.id)
+    course_list = dict()
+    course_list["courses"] = result
+    course_list["next"] = next_url + f"?limit=3&offset={str(int(offset) + 3)}"
+    return (course_list, 200)
 
 
 if __name__ == '__main__':
