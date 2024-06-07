@@ -14,14 +14,14 @@ app.secret_key = 'SECRET_KEY'
 
 client = datastore.Client()
 
-AVATAR_PHOTO='XXXXXXXXXXX'
-PASSWORD = "XXXXXXXXXXXXXX"
+AVATAR_PHOTO='XXXXXXXXXXXXX'
+PASSWORD = "XXXXXXXXXXXXXXXXXXX"
 USERS = "users"
 COURSES = "courses"
 # Update the values of the following 3 variables
-CLIENT_ID = 'XXXXXXXXXXXXXXX'
-CLIENT_SECRET = 'XXXXXXXXXXXXXXXXXXX'
-DOMAIN = 'XXXXXXXXXXXXXXXXXX'
+CLIENT_ID = 'XXXXXXXXXXXXXXXXXXXXXX'
+CLIENT_SECRET = 'XXXXXXXXXXXXXXXXXXXXXXXX'
+DOMAIN = 'XXXXXXXXXXXXXXXXXXXXXXXX'
 # For example
 # DOMAIN = '493-24-spring.us.auth0.com'
 # Note: don't include the protocol in the value of the variable DOMAIN
@@ -338,6 +338,17 @@ def get_user(id):
         return (ERROR_403, 403)
     if requesting_user["role"] != "admin" and payload["sub"] != requested_user["sub"]:
         return (ERROR_403, 403)
+    if "avatar" in requested_user:
+        requested_user["avatar_url"] = request.base_url + "/avatar"
+    if requested_user["role"] != "admin":
+        if "courses" not in requested_user:
+            requested_user["courses"] = list()
+        stored_course_list = requested_user["courses"]
+        requested_user["courses"] = list()
+        base_url = request.base_url.split("users")
+        base_url = base_url[0]
+        for course in stored_course_list:
+            requested_user["courses"].append(base_url + "/courses/" + str(course))
     return (requesting_user, 200) #?
 
 def validate_course_create_request(request_json, required_attributes):
@@ -518,7 +529,7 @@ def delete_course_from_course_list(course_id, students=False, instructors=False)
     datastore_query = client.query(kind=USERS)
     datastore_query_results = datastore_query.fetch()
     for user in datastore_query_results:
-        if user["role"] == "admmin":
+        if user["role"] == "admin":
             continue
         if not students:
             continue
@@ -541,13 +552,101 @@ def update_course_enrollment(id):
     If  JWT is invalid or missing, 401 is returned. If JWT is valid, but doesn't belong to admin
     or appropriate instructor, 403 is returned. If there are any errors in the request body, 409 is returned.
     """
-    pass
+    try:
+        payload = verify_jwt(request)
+    except:
+        return (ERROR_401, 401)
+    requesting_user = get_requesting_user(payload["sub"])
+    # check if user is instructor, and if they are the instructor of the course
+    is_teacher = False
+    if "courses" in requesting_user:
+        for course in requesting_user["courses"]:
+            if requesting_user["role"]!= "instructor":
+                break
+            if course == id:
+                is_teacher = True
+    if requesting_user["role"] != "admin" and not is_teacher:
+        return (ERROR_403, 403)
+    course = get_entity_by_id(id, COURSES)
+    if course is None:
+        return (ERROR_403, 403)
+    # verify request, check if request should return 409
+    content = request.get_json()
+    valid_request = verify_enrollment_list(content)
+    if not valid_request:
+        return {"Error": "Enrollment data is invalid"}
+    # add students to course
+    for student_id in content["add"]:
+        student = get_entity_by_id(student_id, USERS)
+        del student["id"]
+        if "courses" not in student:
+            student["courses"] = list()
+        student["courses"].append(id)
+        client.put(student)
+    # remove students from course
+    for student_id in content["add"]:
+        student = get_entity_by_id(student_id, USERS)
+        new_course_list = list()
+        for course in student["courses"]:
+            if course != id:
+                new_course_list.append(course)
+        student["courses"] = new_course_list
+        client.put(student)
+    return ('', 200)
 
-def verify_enrollment_list(enrollment_list):
+
+def verify_enrollment_list(request_json):
     """
     Verifies that the request body sent for updating course enrollment is valid. Returns True if so else False
     """
-    
+    # verify there are no repeats in either 'add' or 'remove'
+    for student_id in request_json["add"]:
+        if student_id in request_json["remove"]:
+            return False
+    # verify that all student_ids are valid
+    add_remove_list = request_json["add"] + request_json["remove"]
+    for student_id in add_remove_list:
+        student = get_entity_by_id(student_id, USERS)
+        if student is None:
+            return False
+        if student["role"] != "student":
+            return False
+    return True
+
+
+@app.route('/' + COURSES + '/<int:id>' + "/students", methods=['GET'])
+def get_enrollment(id):
+    """
+    Returns all students enrolled in given course id as a list. Returns 401 if JWT is invalid.
+    Returns 403 if either the course doesnt exist, or the requester is not admin or the instructor
+    of the course
+    """
+    try:
+        payload = verify_jwt(request)
+    except:
+        return (ERROR_401, 401)
+    requesting_user = get_requesting_user(payload["sub"])
+    # check if user is instructor, and if they are the instructor of the course
+    is_teacher = False
+    if "courses" in requesting_user:
+        for course in requesting_user["courses"]:
+            if requesting_user["role"]!= "instructor":
+                break
+            if course == id:
+                is_teacher = True
+    if requesting_user["role"] != "admin" and not is_teacher:
+        return (ERROR_403, 403)
+    course = get_entity_by_id(id, COURSES)
+    if course is None:
+        return (ERROR_403, 403)
+    response_list = list()
+    all_student_list = get_query_list_where_a_equals_b("role", "student", USERS)
+    for student in all_student_list:
+        if "courses" in student:
+            for course in student["courses"]:
+                if course == id:
+                    response_list.append(student)
+    return (response_list, 200)
         
 
 if __name__ == '__main__':
