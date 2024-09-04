@@ -46,7 +46,6 @@ auth0 = oauth.register(
     },
 )
 
-# This code is adapted from https://auth0.com/docs/quickstart/backend/python/01-authorization?_ga=2.46956069.349333901.1589042886-466012638.1589042885#create-the-jwt-validation-decorator
 
 class AuthError(Exception):
     def __init__(self, error, status_code):
